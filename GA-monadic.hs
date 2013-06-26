@@ -12,15 +12,16 @@ class Individual a where
     crossover :: (RandomGen g) => a -> a -> State g (a, a)
     createRandom :: (RandomGen g) => GenotypeInfo -> State g a
 
-class Phenotype a where
-    assignFitness :: (Individual a) => a -> Float
+type Fitness = Float
 
-data Population a = Population [a] deriving (Show)
+class Phenotype a where
+    assignFitness :: (Individual a) => a -> Fitness
+
+data Population a = Population [(a, Fitness)] deriving (Show)
 
 data PopulationInfo = PopulationInfo { size :: Int,
-                                       mutProb :: Float }
-
-data GAInfo = GAInfo { generations :: Int }
+                                       mutProb :: Float,
+                                       tournamentSize :: Int }
 
 data StrGene = StrGene String deriving (Show)
 
@@ -48,41 +49,48 @@ dropRand l = randomRVal(0, length l - 1) >>= return . (flip dropVal $ l)
 chooseRand :: (RandomGen g) => [a] -> State g a
 chooseRand l = randomRVal(0, length l - 1) >>= return . ((!!) l)
 
+
+instance Functor Population where
+    fmap f (Population inds) = Population (map g inds)
+        where g = \(ind,fit) -> (f ind, fit)
+
+                    
+createRandomPopulation :: (RandomGen g, Phenotype a, Individual a) => PopulationInfo -> GenotypeInfo -> State g (Population a)
+createRandomPopulation pinfo ginfo = newPop >>= return . Population . map (\i -> (i, assignFitness i))
+                                        where newPop = (replicateM (size pinfo) (createRandom ginfo))
+
+cmpFitness :: (Individual a) => (a, Fitness) -> (a, Fitness) -> Ordering
+cmpFitness (_, f1) (_, f2) = compare f1 f2 
+
+tournamentSelect :: (RandomGen g, Individual a) => Int -> Population a -> State g a
+tournamentSelect count (Population inds) = replicateM count (chooseRand inds) >>= (return . fst . head . (sortBy cmpFitness))
+
+mate :: (RandomGen g, Individual a) => PopulationInfo -> Population a -> State g (a, a)
+mate popinfo pop = do
+                        p1 <- tournamentSelect tsize pop
+                        p2 <- tournamentSelect tsize pop
+                        (c1, c2) <- crossover p1 p2
+                        liftM2 (,) (mutate popinfo c1) (mutate popinfo c2)
+                        where tsize = tournamentSize popinfo
+
+evolve :: (RandomGen g, Individual a, Phenotype a) => PopulationInfo -> Population a -> State g (Population a)
+evolve popinfo (Population inds) = replicateM numMates (mate popinfo (Population inds)) >>= return . Population . (foldr ttoa []) 
+                                    where numMates = length inds `div` 2
+                                          ttoa = (\(f,s) a -> (f, assignFitness f) : (s, assignFitness s) : a)
+
+generateRun :: (RandomGen g, Individual a, Phenotype a) => Int -> PopulationInfo -> (Population a -> State g (Population a))
+generateRun 0 popinfo = evolve popinfo 
+generateRun n popinfo = (evolve popinfo) >=> generateRun (n-1) popinfo 
+
+optimise :: (Individual a, Phenotype a) => Int -> PopulationInfo -> GenotypeInfo -> Population a
+optimise iters popinfo ginfo = evalState (generateRun iters popinfo pop) r
+                                    where (pop, r) = runState (createRandomPopulation popinfo ginfo) (mkStdGen 1)
+
 mutateChar :: (RandomGen g) => PopulationInfo -> Char -> State g Char
 mutateChar pinfo c = do
                         decider <- randomVal
                         newC <- randomRVal (0,255)
                         if decider > (mutProb pinfo) then return c else return $ chr newC
-
-instance Functor Population where
-    fmap f (Population inds) = Population (map f inds)
-
-                    
-createRandomPopulation :: (RandomGen g, Individual a) => PopulationInfo -> GenotypeInfo -> State g (Population a)
-createRandomPopulation pinfo ginfo = liftM Population (replicateM (size pinfo) (createRandom ginfo))
-
-tournamentSelect :: (RandomGen g, Individual a, Ord a) => Int -> Population a -> State g a
-tournamentSelect count (Population inds) = replicateM count (chooseRand inds) >>= (return . head . sort)
-
-mate :: (RandomGen g, Individual a, Ord a) => PopulationInfo -> Population a -> State g (a, a)
-mate popinfo pop = do
-                        p1 <- tournamentSelect 3 pop
-                        p2 <- tournamentSelect 3 pop
-                        (c1, c2) <- crossover p1 p2
-                        liftM2 (,) (mutate popinfo c1) (mutate popinfo c2)
-
-evolve :: (RandomGen g, Individual a, Ord a) => PopulationInfo -> Population a -> State g (Population a)
-evolve popinfo (Population inds) = replicateM numMates (mate popinfo (Population inds)) >>= return . Population . (foldr ttoa []) 
-                                    where numMates = length inds `div` 2
-                                          ttoa = (\(f,s) a -> f : s : a)
-
-generateRun :: (RandomGen g, Individual a, Ord a) => Int -> PopulationInfo -> (Population a -> State g (Population a))
-generateRun 0 popinfo = evolve popinfo 
-generateRun n popinfo = (evolve popinfo) >=> generateRun (n-1) popinfo 
-
-optimise :: (Individual a, Ord a) => Int -> PopulationInfo -> GenotypeInfo -> Population a
-optimise iters popinfo ginfo = evalState (generateRun iters popinfo pop) r
-                                    where (pop, r) = runState (createRandomPopulation popinfo ginfo) (mkStdGen 1)
 
 instance Individual StrGene where
     mutate pinfo (StrGene str) = liftM StrGene (mapM (mutateChar pinfo) str)
@@ -102,16 +110,10 @@ instance Phenotype StrGene where
     assignFitness (StrGene str) = (fromIntegral . sum) (zipWith charCmp "Hello World!" str)
                                                 where charCmp x y = abs (ord x - ord y)
                     
-instance Eq StrGene where
-    (==) lhs rhs = assignFitness lhs == assignFitness rhs
-
-instance Ord StrGene where
-    (<=) lhs rhs = assignFitness lhs <= assignFitness rhs
-
 {-
 Example run
 
-x = PopulationInfo 100 0.03
+x = PopulationInfo 100 0.03 3
 y = GenotypeInfo 12 12
 z = optimise 1 x y :: Population StrGene 
 -}
