@@ -108,9 +108,10 @@ instance Eq StrGene where
 instance Ord StrGene where
     (<=) lhs rhs = assignFitness lhs <= assignFitness rhs
 
+{-
+Example run
+
 x = PopulationInfo 100 0.03
 y = GenotypeInfo 12 12
-z = optimise 1 x y :: Population StrGene
-
-get2 :: Population StrGene -> (StrGene, StrGene)
-get2 (Population inds) = (head inds , head . tail $ inds) 
+z = optimise 1 x y :: Population StrGene 
+-}
