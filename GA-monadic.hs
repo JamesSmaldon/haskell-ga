@@ -106,8 +106,15 @@ instance Individual StrGene where
                             return $ StrGene (map chr nums)
 
 
+zipWithOverHang :: (a -> a -> b) -> (a -> b) -> [a] -> [a] -> [b]
+zipWithOverHang f g (x:xs) (y:ys) = (f x y) : zipWithOverHang f g xs ys
+zipWithOverHang f g [] (y:ys) = (g y) : zipWithOverHang f g [] ys
+zipWithOverHang f g (x:xs) [] = (g x) : zipWithOverHang f g xs []
+zipWithOverHang f g [] [] = []
+
+
 instance Phenotype StrGene where
-    assignFitness (StrGene str) = (fromIntegral . sum) (zipWith charCmp "Hello World!" str)
+    assignFitness (StrGene str) = (fromIntegral . sum . (map (flip (^) 2))) (zipWithOverHang charCmp ord "Hello World!" str)
                                                 where charCmp x y = abs (ord x - ord y)
                     
 {-
