@@ -20,7 +20,8 @@ class Phenotype a where
 data Population a = Population [(a, Fitness)] deriving (Show)
 
 data PopulationInfo = PopulationInfo { size :: Int,
-                                       mutProb :: Float,
+                                       mutationRate :: Float,
+                                       crossoverRate :: Float,
                                        tournamentSize :: Int }
 
 data StrGene = StrGene String deriving (Show)
@@ -65,11 +66,16 @@ cmpFitness (_, f1) (_, f2) = compare f1 f2
 tournamentSelect :: (RandomGen g, Individual a) => Int -> Population a -> State g a
 tournamentSelect count (Population inds) = replicateM count (chooseRand inds) >>= (return . fst . head . (sortBy cmpFitness))
 
+doCrossover :: (RandomGen g, Individual a) => Bool -> a -> a -> State g (a, a)
+doCrossover True i1 i2 = crossover i1 i2
+doCrossover False i1 i2 = return (i1, i2)
+
 mate :: (RandomGen g, Individual a) => PopulationInfo -> Population a -> State g (a, a)
 mate popinfo pop = do
+                        rval <- randomVal
                         p1 <- tournamentSelect tsize pop
                         p2 <- tournamentSelect tsize pop
-                        (c1, c2) <- crossover p1 p2
+                        (c1, c2) <- doCrossover (rval <= crossoverRate popinfo) p1 p2
                         liftM2 (,) (mutate popinfo c1) (mutate popinfo c2)
                         where tsize = tournamentSize popinfo
 
@@ -90,7 +96,7 @@ mutateChar :: (RandomGen g) => PopulationInfo -> Char -> State g Char
 mutateChar pinfo c = do
                         decider <- randomVal
                         newC <- randomRVal (0,255)
-                        if decider > (mutProb pinfo) then return c else return $ chr newC
+                        if decider > (mutationRate pinfo) then return c else return $ chr newC
 
 instance Individual StrGene where
     mutate pinfo (StrGene str) = liftM StrGene (mapM (mutateChar pinfo) str)
@@ -114,13 +120,14 @@ zipWithOverHang f g [] [] = []
 
 
 instance Phenotype StrGene where
-    assignFitness (StrGene str) = (fromIntegral . sum . (map (flip (^) 2))) (zipWithOverHang charCmp ord "Hello World!" str)
+    assignFitness (StrGene str) = (fromIntegral . sum) (zipWithOverHang charCmp overrunCmp "Hello World!" str)
                                                 where charCmp x y = abs (ord x - ord y)
+                                                      overrunCmp = flip (^) 2 . ord
                     
 {-
 Example run
 
-x = PopulationInfo 100 0.03 3
+x = PopulationInfo 100 0.03 0.5 3
 y = GenotypeInfo 12 12
 z = optimise 1 x y :: Population StrGene 
 -}
